@@ -14,6 +14,19 @@ and the admins are notified; fulfilment happens off-platform.
 > database. A variant of this codebase runs in production for a real retail
 > client; that deployment, its data, and its branding are not part of this repo.
 
+## Design decisions at a glance
+
+The full reasoning is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); the
+short version:
+
+| Decision | Why | Alternative I didn't take |
+| --- | --- | --- |
+| **Order lines are snapshots** (name + price copied into `order_items`) | A receipt must show what the customer actually paid, even after the product is renamed, repriced or deleted. | A foreign key to `products.id` — history would silently change with the catalog. |
+| **Money as integer cents** | No float rounding errors in totals. The admin price parser accepts `24,50`, `24.50` and `€24.50`. | `float` or `Decimal` columns. |
+| **Self-migrating schema at startup**, with a guard | A deploy is just a code push, so there's no manual DB step. Rebuilding `brands` means `DROP TABLE`, which would cascade-delete the whole catalog if SQLite FK enforcement were on, so the migration checks and refuses to run. | Alembic: the right tool for a growing schema, but too much for one table change. |
+| **Translations fall back** `requested → English → key` | A missing translation shows English instead of crashing a handler or rendering a blank button. | Failing hard on missing keys. |
+| **Router order is explicit** (`start → catalog → cart → admin`) | aiogram matches routers in registration order; this stops the catalog's broad callback filters from swallowing admin wizard steps. | Relying on import order. |
+
 ## Stack
 
 - **Python 3.11**, [aiogram](https://docs.aiogram.dev/) 3.x — async, `Router`/FSM,
@@ -28,7 +41,7 @@ and the admins are notified; fulfilment happens off-platform.
 - 🛍 **Catalog browsing** on inline keyboards — category → brand → line → product.
 - 🧺 **Cart** with per-item quantity and a live total.
 - ✅ **Checkout** — mail delivery (address + recipient details) or in-person
-  pickup, with a configurable minimum order for nearby-town pickup.
+  pickup, with a minimum order for nearby-town pickup.
 - 🔔 **Admin order notifications** to every configured admin chat.
 - 🛠 **In-Telegram admin panel** — add / edit / delete brands, product lines,
   and products (including photos) through guided FSM flows.
@@ -101,6 +114,14 @@ bot/
 seed.py            loads the fictional demo catalog
 docs/ARCHITECTURE.md
 ```
+
+## Known limitations
+
+- Checkout and admin wizard state live in `MemoryStorage`, so a flow that is in
+  progress is lost on restart. Redis-backed FSM storage would fix this.
+- It handles order intake only: there's no payment step and no stock counts.
+- SQLite with a single writer is fine for one small shop. Postgres would be
+  the next step if concurrency grows.
 
 ## License
 
